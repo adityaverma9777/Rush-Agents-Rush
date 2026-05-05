@@ -111,6 +111,7 @@ export default function Page() {
   const [tickHistory, setTickHistory] = useState<any[]>([])
   const [reportOpen, setReportOpen] = useState(false)
   const [reportData, setReportData] = useState<any | null>(null)
+  const [fireStatus, setFireStatus] = useState<any | null>(null)
   const [mapSize, setMapSize] = useState({ width: 1200, height: 800 })
   const wsRef = useRef<WebSocket | null>(null)
   const mapDivRef = useRef<HTMLDivElement>(null)
@@ -168,6 +169,10 @@ export default function Page() {
                     if (e.type === 'alliance_proposal') return { agent_id: e.from_model, text: '', type: 'alliance_proposal', to_model: e.to_model }
                     if (e.type === 'alliance_accept') return { agent_id: e.model_a, text: '', type: 'alliance_accept', to_model: e.model_b }
                     if (e.type === 'alliance_reject') return { agent_id: e.from_model, text: '', type: 'alliance_reject', to_model: e.to_model }
+                    if (e.type === 'fire_status') {
+                      setFireStatus({ intensity: e.intensity, radius: e.radius, ticks: e.ticks_to_extinguish, secs: e.secs_to_extinguish })
+                      return null
+                    }
                     return null
                 }).filter(Boolean)
                 setChatMessages(prevMsgs => [...prevMsgs, ...newMsgs])
@@ -249,6 +254,16 @@ export default function Page() {
         </div>
 
         <div className="p-6 border-t border-white/5">
+          {simState?.fire && (
+            <div className="mb-4 text-xs font-mono text-white/60">
+              <div>Fire Intensity: <span className="font-bold text-white">{Math.round(simState.fire.intensity)}%</span></div>
+              {fireStatus && fireStatus.secs != null ? (
+                <div>ETA to extinguish: <span className="font-bold text-white">{Math.round(fireStatus.secs)}s</span></div>
+              ) : (
+                <div>ETA to extinguish: <span className="text-white/30">—</span></div>
+              )}
+            </div>
+          )}
           {appState === "selecting" && (
             <button
               onClick={handleStart}

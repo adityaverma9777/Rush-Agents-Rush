@@ -104,6 +104,14 @@ class FireSpreadEvent(BaseModel):
     new_intensity: float
 
 
+class FireStatusEvent(BaseModel):
+    type: Literal["fire_status"] = "fire_status"
+    radius: float
+    intensity: float
+    ticks_to_extinguish: Optional[int] = None
+    secs_to_extinguish: Optional[float] = None
+
+
 class ChatEntry(BaseModel):
     agent_id: str
     message: str

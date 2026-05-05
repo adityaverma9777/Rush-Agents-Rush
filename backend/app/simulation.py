@@ -1,6 +1,7 @@
 import asyncio
 import math
-from typing import Union
+import random
+from typing import Union, Optional
 
 from .models import (
     AgentModel,
@@ -11,6 +12,7 @@ from .models import (
     WaterCollectedEvent,
     FireExtinguishedEvent,
     FireSpreadEvent,
+    FireStatusEvent,
     SimulationState,
     TickResponse,
     ChatEntry,
@@ -120,6 +122,19 @@ class SimulationEngine:
         # 6. Kill agents in fire
         death_events = self._kill_agents_in_fire(living_agents, fire)
         events.extend(death_events)
+
+        # Add fire status event (ETA/progress) for frontend visualization
+        try:
+            status = self._compute_fire_status(living_agents, fire)
+            if status is not None:
+                events.append(FireStatusEvent(
+                    radius=status['radius'],
+                    intensity=status['intensity'],
+                    ticks_to_extinguish=status['ticks_to_extinguish'],
+                    secs_to_extinguish=status['secs_to_extinguish'],
+                ))
+        except Exception:
+            pass
 
         # 7. Check win condition
         self.state.round += 1
@@ -301,10 +316,64 @@ class SimulationEngine:
 
             dist_to_fire = math.dist((agent.x, agent.y), (fire.x, fire.y))
             
-            # Agent dies if inside fire radius
+            # Agent dies if inside fire radius.
+            # Use intensity-based lethality: high intensity => near-certain death; lower intensity => probabilistic.
             if dist_to_fire < fire.radius:
-                agent.alive = False
-                events.append(DeathEvent(model=agent.model_name))
-                events.append(MessageEvent(model=agent.model_name, content="No!!! The fire got me..."))
+                # Immediate fatality at very high intensity
+                if fire.intensity >= 90.0:
+                    lethal = True
+                else:
+                    lethal = (random.random() < (fire.intensity / 100.0))
+
+                if lethal:
+                    agent.alive = False
+                    events.append(DeathEvent(model=agent.model_name))
+                    events.append(MessageEvent(model=agent.model_name, content="No!!! The fire got me..."))
 
         return events
+
+    def _compute_fire_status(self, agents, fire) -> Optional[dict]:
+        """Estimate ticks and seconds to extinguish based on current agents with water.
+        Returns dict with radius, intensity, ticks_to_extinguish, secs_to_extinguish or None if not applicable."""
+        if not fire:
+            return None
+
+        # Count agents actively extinguishing (carrying water and near enough)
+        extinguishers = 0
+        for a in agents:
+            if a.water_collected and a.status == 'extinguishing_fire':
+                dist = math.dist((a.x, a.y), (fire.x, fire.y))
+                if dist <= fire.radius + EXTINGUISH_RANGE:
+                    extinguishers += 1
+
+        if extinguishers == 0:
+            return {
+                'radius': fire.radius,
+                'intensity': fire.intensity,
+                'ticks_to_extinguish': None,
+                'secs_to_extinguish': None,
+            }
+
+        living_count = len([a for a in agents if a.alive]) or 1
+        scale = (7.0) / (living_count + 2.0)
+        scale = max(0.5, min(2.5, scale))
+        per_agent_rate = BASE_EXTINGUISH_RATE * scale
+        per_agent_rate = max(MIN_EXTINGUISH_RATE, min(MAX_EXTINGUISH_RATE, per_agent_rate))
+
+        per_tick_reduction = extinguishers * per_agent_rate
+        if per_tick_reduction <= 0:
+            return {
+                'radius': fire.radius,
+                'intensity': fire.intensity,
+                'ticks_to_extinguish': None,
+                'secs_to_extinguish': None,
+            }
+
+        ticks = math.ceil(fire.intensity / per_tick_reduction)
+        secs = ticks * TICK_INTERVAL_SECONDS
+        return {
+            'radius': fire.radius,
+            'intensity': fire.intensity,
+            'ticks_to_extinguish': int(ticks),
+            'secs_to_extinguish': float(secs),
+        }

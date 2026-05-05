@@ -1,7 +1,5 @@
 import asyncio
-import json
 import math
-import random
 from typing import Union
 
 from .models import (
@@ -34,43 +32,13 @@ class SimulationEngine:
     def __init__(self, state: SimulationState) -> None:
         self.state = state
 
-    def _pick_message(self, action: str, current_fire_intensity: float | None = None) -> str:
-        fire_pct = f"{max(0.0, current_fire_intensity or 0.0):.0f}%"
-        options = {
-            "search_water": [
-                "Scanning for the nearest well. No pressure, just a giant fire.",
-                "Heading to water before this turns into a barbecue episode.",
-                "Tracking a water source now. Team hydration, then heroics.",
-                "On water duty. Someone queue victory music.",
-                "I see a well. Sprinting like my GPU is on turbo mode.",
-            ],
-            "collect_water": [
-                "Bucket secured. Fireline, here I come.",
-                "Got water. Time to humble these flames.",
-                "Water collected. Deploying splash protocol.",
-                "Locked and loaded with water. Let's cook the fire instead.",
-            ],
-            "extinguish_fire": [
-                "Pouring at the edge. Flames, meet your uninstall button.",
-                "Holding position and dousing flames. Nice and steady.",
-                "Suppressing fire now. Keep the pressure on.",
-                "Splashing hard. Current fire level: " + fire_pct + ".",
-            ],
-            "escape": [
-                "Tactical retreat. I prefer crispy code, not crispy me.",
-                "Repositioning away from the flames. Living agents win games.",
-                "Backing off from the fire front. Bravery includes not exploding.",
-            ],
-            "celebrate_extinguish": [
-                "Yes! Fire down to {fire_pct}. Keep pouring!",
-                "Let's go! We shaved it to {fire_pct}.",
-                "Big splash energy. Fire now at {fire_pct}.",
-                "Progress! Fire dropped to {fire_pct}. Team is cooking.",
-                "Huge play. Flames at {fire_pct} and falling.",
-            ],
-        }
-        template = random.choice(options.get(action, ["Moving strategically and staying optimistic."]))
-        return template.format(fire_pct=fire_pct)
+    def _normalize_message(self, message: str | None) -> str:
+        if not message:
+            return "Staying focused and moving."
+        cleaned = " ".join(str(message).strip().split())
+        if not cleaned:
+            return "Staying focused and moving."
+        return cleaned[:220]
 
     def _move_toward(self, agent: AgentModel, target_x: float, target_y: float, stop_distance: float = 0) -> None:
         dx = target_x - agent.x
@@ -104,10 +72,15 @@ class SimulationEngine:
         events = []
         bounds = (self.state.map_width, self.state.map_height)
         living_agents = [a for a in self.state.agents if a.alive]
+        recent_radio = [
+            f"{a.display_name}: {a.last_message}"
+            for a in living_agents
+            if a.last_message
+        ][-8:]
 
         # 1. Get decisions from all living agents
         decisions = await asyncio.gather(
-            *[groq_client.generate_fire_decision(agent, fire, self.state.water_sources, living_agents, bounds)
+            *[groq_client.generate_fire_decision(agent, fire, self.state.water_sources, living_agents, bounds, recent_radio)
               for agent in living_agents],
             return_exceptions=True
         )
@@ -199,7 +172,6 @@ class SimulationEngine:
                 coalition = [a.model_name for a in agents if a.mode == "coalition"]
                 self.state.coalition_members = coalition
                 events.append(LeaderElectedEvent(leader=leader_name, coalition_members=coalition))
-                events.append(MessageEvent(model=leader_name, content=f"I'll lead us to victory! Let's find water and extinguish this fire."))
 
         return events
 
@@ -213,7 +185,7 @@ class SimulationEngine:
         for agent in agents:
             decision = decision_map.get(agent.model_name, {})
             action = decision.get("action", "escape")
-            message = decision.get("message", "Moving to safety.")
+            message = self._normalize_message(decision.get("message"))
 
             nearest_water = self._find_nearest_water(agent, self.state.water_sources)
             dist_to_fire = math.dist((agent.x, agent.y), (fire.x, fire.y))
@@ -239,11 +211,9 @@ class SimulationEngine:
                         agent.water_collected = True
                         agent.status = "collecting_water"
                         events.append(WaterCollectedEvent(model=agent.model_name, water_source_id=water_source.id))
-                        message = self._pick_message("collect_water")
                     else:
                         agent.status = "searching"
                         self._move_toward(agent, water_source.x, water_source.y)
-                        message = self._pick_message("search_water")
 
             elif action == "extinguish_fire":
                 if agent.water_collected:
@@ -251,17 +221,15 @@ class SimulationEngine:
                     dist_to_fire = math.dist((agent.x, agent.y), (fire.x, fire.y))
                     target_dist = max(fire.radius + FIRE_SAFE_BUFFER, 0)
                     self._move_toward(agent, fire.x, fire.y, stop_distance=target_dist)
-                    message = self._pick_message("extinguish_fire", current_fire_intensity=fire.intensity)
                 else:
                     agent.status = "searching"
-                    message = "Need water before I can extinguish."
+                    message = self._normalize_message(decision.get("message"))
 
             elif action == "search_water":
                 agent.status = "searching"
                 water_source = nearest_water
                 if water_source:
                     self._move_toward(agent, water_source.x, water_source.y)
-                message = self._pick_message("search_water")
 
             elif action == "escape":
                 agent.status = "escaping"
@@ -273,7 +241,6 @@ class SimulationEngine:
                 agent.y += int((dy / dist) * movement.MAX_AGENT_SPEED)
                 agent.x = max(0, min(agent.x, self.state.map_width))
                 agent.y = max(0, min(agent.y, self.state.map_height))
-                message = self._pick_message("escape")
 
             agent.last_message = message
             events.append(MessageEvent(model=agent.model_name, content=message))
@@ -299,7 +266,6 @@ class SimulationEngine:
                 agents_with_water.append(agent)
         
         if agents_with_water:
-            before_intensity = fire.intensity
             living_count = len([a for a in agents if a.alive]) or 1
             scale = max(0.5, min(2.0, 2.0 / living_count))
             per_agent_rate = BASE_EXTINGUISH_RATE * scale
@@ -313,9 +279,6 @@ class SimulationEngine:
             events.append(FireExtinguishedEvent(extinguished_by=extinguisher_names, fire_intensity=fire.intensity))
             for agent in agents_with_water:
                 agent.extinguish_score += per_agent_rate
-                events.append(MessageEvent(model=agent.model_name, content=self._pick_message("celebrate_extinguish", current_fire_intensity=fire.intensity)))
-                if before_intensity - fire.intensity >= 10:
-                    events.append(MessageEvent(model=agent.model_name, content="That's a big drop! Keep the chain going!"))
                 agent.water_collected = False
 
         return events

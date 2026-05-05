@@ -7,16 +7,95 @@ import ChatFeed from "../components/ChatFeed"
 import ModelSelector from "../components/ModelSelector"
 import { startSimulation, placeVolcano } from "../lib/api"
 import { createSimulationSocket } from "../lib/websocket"
+import ReportPanel from "../components/ReportPanel"
 
 type AppState = "loading" | "selecting" | "placing" | "running" | "gameover"
 
 export default function Page() {
+  function buildReport(history: any[]) {
+    if (!history || history.length === 0) return null
+    const rounds = history.length
+    const last = history[history.length - 1]
+    const models = (last.agents || []).map((a: any) => ({ id: a.model_name, display_name: a.display_name || a.model_name }))
+
+    const per = models.map((m: any) => {
+      const positions = history.map(h => {
+        const a = (h.agents || []).find((x: any) => x.model_name === m.id)
+        return a ? { x: a.x, y: a.y, water: a.water_collected, status: a.status, extinguish_score: a.extinguish_score || 0, last_message: a.last_message } : null
+      }).filter(Boolean)
+
+      let distance = 0
+      for (let i = 1; i < positions.length; i++) {
+        const p0 = positions[i-1]
+        const p1 = positions[i]
+        const dx = p1.x - p0.x
+        const dy = p1.y - p0.y
+        distance += Math.sqrt(dx*dx + dy*dy)
+      }
+
+      let water_picks = 0
+      let logical_moves = 0
+      let logical_checks = 0
+      const messages: Record<string, number> = {}
+
+      for (let i = 0; i < positions.length; i++) {
+        const cur = positions[i]
+        if (cur.last_message) messages[cur.last_message] = (messages[cur.last_message]||0)+1
+        if (i>0) {
+          const prev = positions[i-1]
+          if (!prev.water && cur.water) water_picks++
+          // logical check: when searching, distance to nearest water should decrease
+          if (cur.status === 'searching') {
+            // compute nearest water in this tick
+            const h = history[i]
+            const ws = h.water_sources || []
+            if (ws.length>0) {
+              const distPrev = Math.min(...ws.map((w: any)=> Math.hypot(prev.x - w.x, prev.y - w.y)))
+              const distCur = Math.min(...ws.map((w: any)=> Math.hypot(cur.x - w.x, cur.y - w.y)))
+              logical_checks++
+              if (distCur <= distPrev) logical_moves++
+            }
+          }
+        }
+      }
+
+      const sortedMessages = Object.entries(messages).sort((a:any,b:any)=>b[1]-a[1]).slice(0,6).map((x:any)=>x[0])
+
+      return {
+        id: m.id,
+        display_name: m.display_name,
+        decisions: positions.length,
+        distance,
+        water_picks,
+        extinguish_score: positions.length>0 ? positions[positions.length-1].extinguish_score||0 : 0,
+        logical_pct: logical_checks>0 ? (logical_moves / logical_checks)*100 : 0,
+        top_messages: sortedMessages,
+      }
+    })
+
+    return { rounds, models: per }
+  }
+
+  function tickHistoryToTracks(history: any[]) {
+    const tracks: Record<string, { x: number; y: number }[]> = {}
+    if (!history || history.length === 0) return tracks
+    for (const h of history) {
+      for (const a of h.agents || []) {
+        if (!tracks[a.model_name]) tracks[a.model_name] = []
+        tracks[a.model_name].push({ x: a.x, y: a.y })
+      }
+    }
+    return tracks
+  }
   const [appState, setAppState] = useState<AppState>("loading")
   const [models, setModels] = useState<string[]>([])
   const [simState, setSimState] = useState<any>(null)
   const [chatMessages, setChatMessages] = useState<any[]>([])
   const [winnerLabel, setWinnerLabel] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [tickHistory, setTickHistory] = useState<any[]>([])
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reportData, setReportData] = useState<any | null>(null)
   const [mapSize, setMapSize] = useState({ width: 1200, height: 800 })
   const wsRef = useRef<WebSocket | null>(null)
   const mapDivRef = useRef<HTMLDivElement>(null)
@@ -40,6 +119,7 @@ export default function Page() {
       setSimState(data.state)
       setWinnerLabel(null)
       setChatMessages([])
+        setTickHistory([])
       setAppState("placing")
     } catch (err) {
       console.error(err)
@@ -58,6 +138,8 @@ export default function Page() {
       const ws = createSimulationSocket(
         simState.simulation_id,
         (msg) => {
+          // store each tick state snapshot for post-game analysis
+          if (msg.state) setTickHistory(prev => [...prev, msg.state])
           if (msg.type === "finished") {
             if (msg.state) {
               setSimState(msg.state)
@@ -89,6 +171,9 @@ export default function Page() {
           if (msg.state?.status === "finished") {
             setWinnerLabel(msg.state.winner_model || null)
             setAppState("gameover")
+            // prepare report
+            const report = buildReport([...tickHistory, msg.state])
+            setReportData(report)
           }
         },
         () => setAppState("gameover")
@@ -114,6 +199,7 @@ export default function Page() {
           winnerLabel={winnerLabel}
           mapSize={mapSize}
           onMapClick={handleMapClick}
+          tracks={tickHistoryToTracks(tickHistory)}
         />
       </div>
 
@@ -154,15 +240,23 @@ export default function Page() {
             </div>
           )}
           {(appState === "running" || appState === "gameover") && (
-            <button
-              onClick={() => window.location.reload()}
-              className="w-full bg-white/5 text-white/50 font-mono text-[10px] py-3 rounded-lg hover:bg-white/10 transition-all uppercase tracking-widest"
-            >
-              Reset Arena
-            </button>
+            <div className="space-y-2">
+              {appState === 'gameover' && reportData && (
+                <button onClick={() => setReportOpen(true)} className="w-full bg-white text-black font-mono text-xs font-bold py-3 rounded-xl">View Report</button>
+              )}
+              <button
+                onClick={() => window.location.reload()}
+                className="w-full bg-white/5 text-white/50 font-mono text-[10px] py-3 rounded-lg hover:bg-white/10 transition-all uppercase tracking-widest"
+              >
+                Reset Arena
+              </button>
+            </div>
           )}
         </div>
       </aside>
+      {reportOpen && reportData && (
+        <ReportPanel report={reportData} onClose={() => setReportOpen(false)} />
+      )}
     </main>
   )
 }

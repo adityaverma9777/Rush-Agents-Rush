@@ -57,6 +57,7 @@ export default function MapCanvas({
   winnerLabel,
   mapSize,
   onMapClick,
+  tracks,
 }: {
   agents: Agent[]
   fire: Fire | null
@@ -66,6 +67,7 @@ export default function MapCanvas({
   winnerLabel?: string | null
   mapSize: { width: number; height: number }
   onMapClick?: (x: number, y: number) => void
+  tracks?: Record<string, { x: number; y: number }[]>
 }) {
   const gridSize = 40
   const sx = (bx: number) => (bx / BACKEND_W) * mapSize.width
@@ -142,6 +144,24 @@ export default function MapCanvas({
               strokeWidth={2}
               strokeDasharray="6 6"
             />
+          ))}
+        </svg>
+      )}
+
+      {/* Tracks */}
+      {tracks && (
+        <svg className="absolute inset-0 w-full h-full pointer-events-none">
+          {Object.entries(tracks).map(([model, points]) => (
+            points.length > 1 && (
+              <polyline
+                key={model}
+                points={points.map(p => `${sx(p.x)},${sy(p.y)}`).join(" ")}
+                fill="none"
+                stroke={getAgentColor(model)}
+                strokeWidth={2}
+                strokeOpacity={0.6}
+              />
+            )
           ))}
         </svg>
       )}

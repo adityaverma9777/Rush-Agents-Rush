@@ -35,7 +35,10 @@ export async function placeVolcano(simulationId: string, x: number, y: number) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ simulation_id: simulationId, x, y }),
   })
-  if (!response.ok) throw new Error("Failed to place fire")
+  if (!response.ok) {
+    const details = await response.text()
+    throw new Error(`Failed to place fire (${response.status}): ${details}`)
+  }
   return response.json()
 }
 

@@ -36,6 +36,13 @@ app.add_middleware(
 active_simulations: dict[str, SimulationState] = {}
 START_TIME = time.time()
 
+
+def _safe_randint(low: int, high: int) -> int:
+    """Return a valid random int even if bounds are inverted."""
+    if low > high:
+        low, high = high, low
+    return random.randint(low, high)
+
 class StartSimulationRequest(BaseModel):
     model_names: list[str] = Field(..., min_length=2, max_length=6)
     scenario: str = "fire"
@@ -103,16 +110,38 @@ def place_fire(req: PlaceFireRequest):
     if sim.status != "waiting_for_scenario":
         raise HTTPException(status_code=409, detail="Fire already placed or simulation finished.")
 
-    # Create fire at clicked location
-    sim.fire = FireScenario(x=req.x, y=req.y)
+    # Create fire at a clamped location inside map bounds.
+    fire_x = max(0, min(req.x, sim.map_width))
+    fire_y = max(0, min(req.y, sim.map_height))
+    sim.fire = FireScenario(x=fire_x, y=fire_y)
 
     # Generate 3-5 water sources scattered around the map
     num_sources = random.randint(3, 5)
+    x_margin = 80
+    y_margin = 80
+    x_min = x_margin
+    x_max = max(x_margin, sim.map_width - x_margin)
+    y_min = y_margin
+    y_max = max(y_margin, sim.map_height - y_margin)
+
     for i in range(num_sources):
-        water_x = random.randint(100, req.x - 200) if req.x > 200 else random.randint(0, 400)
-        if random.random() > 0.5:
-            water_x = random.randint(req.x + 200, sim.map_width - 100) if req.x < sim.map_width - 200 else random.randint(sim.map_width - 400, sim.map_width)
-        water_y = random.randint(100, sim.map_height - 100)
+        # Prefer spawning wells to one side of the fire, but always keep ranges valid.
+        left_low = x_min
+        left_high = min(fire_x - 180, x_max)
+        right_low = max(fire_x + 180, x_min)
+        right_high = x_max
+
+        pick_left = random.random() < 0.5
+        if pick_left and left_low <= left_high:
+            water_x = _safe_randint(left_low, left_high)
+        elif right_low <= right_high:
+            water_x = _safe_randint(right_low, right_high)
+        elif left_low <= left_high:
+            water_x = _safe_randint(left_low, left_high)
+        else:
+            water_x = _safe_randint(x_min, x_max)
+
+        water_y = _safe_randint(y_min, y_max)
         sim.water_sources.append(WaterSource(id=f"water_{i}", x=water_x, y=water_y))
 
     sim.status = "running"

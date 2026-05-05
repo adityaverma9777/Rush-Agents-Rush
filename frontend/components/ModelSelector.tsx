@@ -6,8 +6,7 @@ import { getAvailableModels } from "../lib/api"
 interface Model {
   id: string
   name: string
-  backend?: string
-  tag?: string
+  description?: string
 }
 
 export default function ModelSelector({
@@ -28,30 +27,17 @@ export default function ModelSelector({
       try {
         const data = await getAvailableModels()
         
-        // Combine Groq and HF Spaces models
-        const combined: Model[] = [
-          ...(data.groq_models || []).map((m: any) => ({
-            id: m.id,
-            name: m.name,
-            backend: "groq",
-            tag: "groq"
-          })),
-          ...(data.hf_spaces_models || []).map((m: any) => ({
-            id: m.id,
-            name: m.name,
-            backend: "hf",
-            tag: "hf-spaces"
-          }))
-        ]
-        setAllModels(combined)
+        // Use unified model list (no backend categorization)
+        const modelList = data.models || data.hf_models || data.groq_models || []
+        setAllModels(modelList)
       } catch (err) {
         console.error("Failed to fetch models:", err)
-        // Fallback to default Groq models
+        // Fallback to default models
         setAllModels([
-          { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B", backend: "groq", tag: "groq" },
-          { id: "llama-3.1-70b-versatile", name: "Llama 3.1 70B", backend: "groq", tag: "groq" },
-          { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", backend: "groq", tag: "groq" },
-          { id: "gemma-7b-it", name: "Gemma 7B", backend: "groq", tag: "groq" },
+          { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", description: "High-performance model" },
+          { id: "llama2-70b-4096", name: "Llama 2 70B", description: "Large instruction-tuned model" },
+          { id: "mistralai/Mistral-7B-Instruct-v0.2", name: "Mistral 7B", description: "Fast 7B model" },
+          { id: "NousResearch/Nous-Hermes-2-Mistral-7B-DPO", name: "Nous Hermes 2", description: "High-quality model" },
         ])
       } finally {
         setLoading(false)
@@ -71,74 +57,34 @@ export default function ModelSelector({
     )
   }
 
-  // Group models by backend
-  const groqModels = allModels.filter(m => m.backend === "groq")
-  const hfModels = allModels.filter(m => m.backend === "hf")
-
   return (
     <div className="px-4 py-6 space-y-6">
       <div>
         <h3 className="text-[10px] font-mono text-white/30 uppercase tracking-[0.2em] mb-4">
           Select Survivors ({models.length}/6)
         </h3>
-        <div className="space-y-4">
-          {/* Groq Models */}
-          {groqModels.length > 0 && (
-            <div>
-              <h4 className="text-[8px] font-mono text-white/40 uppercase tracking-[0.15em] mb-2">Groq API</h4>
-              <div className="grid grid-cols-1 gap-1.5">
-                {groqModels.map((m) => {
-                  const isSelected = models.includes(m.id)
-                  return (
-                    <button
-                      key={m.id}
-                      onClick={() => isSelected ? onRemove(m.id) : onAdd(m.id)}
-                      disabled={full && !isSelected}
-                      className={`flex items-center justify-between px-3 py-2 rounded-lg border transition-all duration-200 ${
-                        isSelected 
-                          ? 'bg-blue-500/10 border-blue-500/30' 
-                          : 'border-transparent hover:bg-white/5 opacity-60 hover:opacity-100'
-                      } ${full && !isSelected ? 'cursor-not-allowed opacity-20' : ''}`}
-                    >
-                      <span className="font-mono text-xs text-white/90">{m.name}</span>
-                      <span className="text-[8px] font-mono uppercase px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400">
-                        Groq
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* HF Spaces Models */}
-          {hfModels.length > 0 && (
-            <div>
-              <h4 className="text-[8px] font-mono text-white/40 uppercase tracking-[0.15em] mb-2">HuggingFace Spaces</h4>
-              <div className="grid grid-cols-1 gap-1.5">
-                {hfModels.map((m) => {
-                  const isSelected = models.includes(m.id)
-                  return (
-                    <button
-                      key={m.id}
-                      onClick={() => isSelected ? onRemove(m.id) : onAdd(m.id)}
-                      disabled={full && !isSelected}
-                      className={`flex items-center justify-between px-3 py-2 rounded-lg border transition-all duration-200 ${
-                        isSelected 
-                          ? 'bg-purple-500/10 border-purple-500/30' 
-                          : 'border-transparent hover:bg-white/5 opacity-60 hover:opacity-100'
-                      } ${full && !isSelected ? 'cursor-not-allowed opacity-20' : ''}`}
-                    >
-                      <span className="font-mono text-xs text-white/90">{m.name}</span>
-                      <span className="text-[8px] font-mono uppercase px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">
-                        HF
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+        <div className="space-y-1.5">
+          {allModels.map((m) => {
+            const isSelected = models.includes(m.id)
+            return (
+              <button
+                key={m.id}
+                onClick={() => isSelected ? onRemove(m.id) : onAdd(m.id)}
+                disabled={full && !isSelected}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all duration-200 ${
+                  isSelected 
+                    ? 'bg-white/10 border-white/20' 
+                    : 'border-transparent hover:bg-white/5 opacity-60 hover:opacity-100'
+                } ${full && !isSelected ? 'cursor-not-allowed opacity-20' : ''}`}
+                title={m.description}
+              >
+                <span className="font-mono text-xs text-white/90 text-left flex-1">{m.name}</span>
+                <span className={`text-[8px] font-mono ml-2 px-2 py-1 rounded ${isSelected ? 'bg-white/20 text-white' : 'text-white/30'}`}>
+                  {isSelected ? "✓" : "○"}
+                </span>
+              </button>
+            )
+          })}
         </div>
       </div>
       
@@ -150,7 +96,7 @@ export default function ModelSelector({
               return (
                 <div key={id} className="flex items-center gap-2 bg-white/5 px-2 py-1 rounded border border-white/10">
                   <span className="font-mono text-[10px] text-white/50">
-                    {model?.name || id}
+                    {model?.name || id.split("/").pop()}
                   </span>
                   <button onClick={() => onRemove(id)} className="text-white/20 hover:text-white">✕</button>
                 </div>
@@ -162,3 +108,4 @@ export default function ModelSelector({
     </div>
   )
 }
+

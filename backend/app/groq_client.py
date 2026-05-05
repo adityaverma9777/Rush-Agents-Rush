@@ -2,20 +2,47 @@ import json
 import os
 import random
 import math
+import httpx
 from groq import AsyncGroq
 from dotenv import load_dotenv
 
 load_dotenv()
 
 _GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-_client = AsyncGroq(api_key=_GROQ_API_KEY) if _GROQ_API_KEY else None
+_HF_API_TOKEN = os.environ.get("HF_API_TOKEN")
+_groq_client = AsyncGroq(api_key=_GROQ_API_KEY) if _GROQ_API_KEY else None
+_HF_API_BASE = "https://api-inference.huggingface.co/models"
 
-DEFAULT_DECISION_MODEL = "llama-3.1-8b-instant"
 MAX_AGENT_SPEED = 80
+
+# Premium Groq models (high-token limits, no rate limits for these)
+GROQ_PREMIUM_MODELS = [
+    "mixtral-8x7b-32768",
+    "llama2-70b-4096",
+]
+
+# Open-source models available via HF Inference API (unlimited calls)
+HF_MODELS = [
+    "mistralai/Mistral-7B-Instruct-v0.2",
+    "NousResearch/Nous-Hermes-2-Mistral-7B-DPO",
+    "meta-llama/Llama-2-7b-chat-hf",
+    "google/flan-t5-large",
+]
 
 
 def is_ready():
-    return _client is not None
+    """Check if we have at least one backend available."""
+    return _groq_client is not None or _HF_API_TOKEN is not None
+
+
+def _is_groq_model(model_id: str) -> bool:
+    """Check if model is a Groq premium model."""
+    return model_id in GROQ_PREMIUM_MODELS
+
+
+def _is_hf_model(model_id: str) -> bool:
+    """Check if model is a HF model."""
+    return model_id in HF_MODELS
 
 
 def _build_fire_state_summary(agent, fire, all_agents) -> str:
@@ -47,10 +74,10 @@ def _build_fire_state_summary(agent, fire, all_agents) -> str:
 
 async def generate_fire_decision(agent, fire, water_sources, other_agents, bounds, recent_radio=None) -> dict:
     """
-    Fire scenario decision system.
+    Fire scenario decision system supporting both Groq and HF models.
     Actions: search_water, collect_water, extinguish_fire, escape, vote_for_leader
     """
-    if not _client:
+    if not is_ready():
         return _fallback_escape(agent, fire)
 
     dist_to_fire = math.dist((agent.x, agent.y), (fire.x, fire.y))
@@ -63,6 +90,7 @@ async def generate_fire_decision(agent, fire, water_sources, other_agents, bound
 
     coalition_leader = next((a.model_name for a in other_agents if a.is_leader), None)
     dist_to_water_display = f"{dist_to_water:.0f}px" if dist_to_water is not None else "unknown"
+    
     system_prompt = f"""You are {agent.model_name}, an AI model in a critical wildfire survival scenario.
 
 THE SCENARIO:
@@ -94,9 +122,6 @@ CHAT STYLE:
 - Keep it to one short sentence, playful or supportive, but still mission-focused.
 - Avoid repetitive template phrases.
 
-OUTPUT FORMAT - return ONLY valid JSON:
-{{"action": "<search_water|collect_water|extinguish_fire|escape|vote_for_leader>", "vote_for": "<model_name if voting, else null>", "message": "<full English sentence>", "reasoning": "<one sentence>"}}
-
 CURRENT STATE:
 Your position: ({agent.x}, {agent.y})
 Fire position: ({fire.x}, {fire.y})
@@ -113,20 +138,60 @@ RECENT RADIO CHAT:
 
 {state_summary}
 
-What do you do?"""
+Respond with ONLY valid JSON on a single line (no markdown, no code block):
+{{"action": "<search_water|collect_water|extinguish_fire|escape|vote_for_leader>", "vote_for": null, "message": "<sentence>", "reasoning": "<sentence>"}}"""
 
     try:
-        completion = await _client.chat.completions.create(
-            model=DEFAULT_DECISION_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Make your decision."}
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=150,
-            timeout=3.0
-        )
-        decision = json.loads(completion.choices[0].message.content)
+        if _is_groq_model(agent.model_name) and _groq_client:
+            # Use Groq for premium models
+            completion = await _groq_client.chat.completions.create(
+                model=agent.model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "Make your decision."}
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=150,
+                timeout=3.0
+            )
+            decision = json.loads(completion.choices[0].message.content)
+        elif _is_hf_model(agent.model_name) and _HF_API_TOKEN:
+            # Use HF Inference API for open-source models
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{_HF_API_BASE}/{agent.model_name}",
+                    headers={"Authorization": f"Bearer {_HF_API_TOKEN}"},
+                    json={
+                        "inputs": system_prompt,
+                        "parameters": {
+                            "max_new_tokens": 200,
+                            "temperature": 0.7,
+                            "top_p": 0.9,
+                        }
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if isinstance(data, list) and len(data) > 0:
+                    text = data[0].get("generated_text", "")
+                else:
+                    text = data.get("generated_text", "")
+                
+                text = text[len(system_prompt):].strip() if text.startswith(system_prompt) else text
+                
+                try:
+                    json_start = text.find('{')
+                    json_end = text.rfind('}') + 1
+                    if json_start >= 0 and json_end > json_start:
+                        json_str = text[json_start:json_end]
+                        decision = json.loads(json_str)
+                    else:
+                        decision = {}
+                except json.JSONDecodeError:
+                    decision = {}
+        else:
+            return _fallback_escape(agent, fire)
         
         action = decision.get("action", "escape")
         if action not in ["search_water", "collect_water", "extinguish_fire", "escape", "vote_for_leader"]:
@@ -144,7 +209,7 @@ What do you do?"""
             "reasoning": decision.get("reasoning", "Survival and teamwork.")
         }
     except Exception as e:
-        print(f"Error calling groq for {agent.model_name}: {e}")
+        print(f"Error calling inference for {agent.model_name}: {e}")
         return _fallback_escape(agent, fire)
 
 
@@ -159,3 +224,4 @@ def _fallback_escape(agent, fire) -> dict:
         "vote_for": None,
         "reasoning": "Fallback: survive."
     }
+

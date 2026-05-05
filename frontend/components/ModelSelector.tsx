@@ -28,8 +28,22 @@ export default function ModelSelector({
         const data = await getAvailableModels()
         
         // Use unified model list (no backend categorization)
-        const modelList = data.models || data.hf_models || data.groq_models || []
-        setAllModels(modelList)
+        // Support multiple backend response formats (new unified `models` or legacy grouped keys)
+        if (data.models && Array.isArray(data.models)) {
+          setAllModels(data.models)
+        } else {
+          const groq = data.groq_models || data.groqModels || data.groq || []
+          const hf = data.hf_spaces_models || data.hf_spaces || data.hf_models || data.hfModels || []
+          const merged: Model[] = []
+          if (Array.isArray(groq)) {
+            for (const g of groq) merged.push({ id: g.id, name: g.name || g.id, description: g.description || g.backend || '' })
+          }
+          if (Array.isArray(hf)) {
+            for (const h of hf) merged.push({ id: h.id, name: h.name || h.id, description: h.description || h.space_url || '' })
+          }
+          if (merged.length > 0) setAllModels(merged)
+          else setAllModels([])
+        }
       } catch (err) {
         console.error("Failed to fetch models:", err)
         // Fallback to default models

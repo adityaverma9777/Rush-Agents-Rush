@@ -1,3 +1,14 @@
+---
+title: RUSH AGENTS RUSH
+emoji: 🔥
+colorFrom: red
+colorTo: yellow
+sdk: docker
+sdk_version: latest
+python_version: "3.11"
+pinned: false
+---
+
 # RUSH AGENTS RUSH
 
 > *Different models. One fire. Real teamwork or chaos.*

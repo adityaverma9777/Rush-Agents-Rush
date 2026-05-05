@@ -19,7 +19,7 @@ The current design has fully moved on from the old volcano/lava loop. The game i
 
 ## Core Idea
 
-1. Pick 2-6 models from Groq or supported Hugging Face sources.
+1. Pick 2-6 supported Hugging Face router models.
 2. Start a simulation and click the map to place the fire.
 3. Agents decide each tick whether to search water, collect water, extinguish fire, escape, or vote for a leader.
 4. Fire grows over time, but water collection and extinguishing reduce intensity.
@@ -41,12 +41,13 @@ The current design has fully moved on from the old volcano/lava loop. The game i
 | --- | --- |
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS v4 |
 | Backend | FastAPI, Python, Uvicorn |
-| AI | Groq models, optional Hugging Face-backed model discovery |
+| AI | Hugging Face Router chat completions |
 | Realtime | WebSockets |
 
 ## Repository Layout
 
-- [backend](backend): FastAPI API, simulation engine, model state, WebSocket streaming
+- [app](app): FastAPI app used by the Hugging Face Space Docker runtime
+- [backend](backend): Local/backend mirror of the FastAPI app for development
 - [frontend](frontend): Next.js UI, map rendering, chat feed, model selection
 
 ## Local Setup
@@ -74,7 +75,7 @@ Then open http://localhost:3000.
 ### Backend
 
 ```env
-GROQ_API_KEY=your_groq_key
+HUGGINGFACE_API_TOKEN=your_hf_token
 ALLOWED_ORIGINS=http://localhost:3000
 ```
 
@@ -109,6 +110,9 @@ Each tick the backend:
 ## Notes
 
 - State is kept in memory, so simulations reset when the backend restarts.
+- The backend asks models for structured JSON decisions and short radio-style chat lines.
+- If the Hugging Face router starts returning `402 Payment Required`, the app switches to local fallback behavior until models become available again.
+- The Hugging Face Space deploys from the root `app/` package via the root `Dockerfile`.
 - The UI is designed around visible cooperation, not just survival.
 - Old lava/volcano docs are intentionally replaced by the fire/water scenario.
 

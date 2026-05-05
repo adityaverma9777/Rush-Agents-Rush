@@ -30,7 +30,7 @@ FastAPI server driving the fire-suppression simulation.
 
 ## Environment Variables
 
-- `GROQ_API_KEY`: Required for agent decisions.
+- `HUGGINGFACE_API_TOKEN` or `HF_API_TOKEN`: Required for Hugging Face router model calls.
 - `ALLOWED_ORIGINS`: CORS whitelist.
 
 ## Local Run
@@ -45,4 +45,6 @@ python -m uvicorn app.main:app --reload --port 8000
 
 - Simulation state is in memory.
 - Fire growth, extinguish rate, and movement are tuned in `app/simulation.py`.
-- Model decisions are generated in `app/groq_client.py`.
+- Model decisions are generated in `app/groq_client.py` through `https://router.huggingface.co/v1/chat/completions`.
+- `/available-models` is backed by `app/hf_spaces.py` and filters a preferred model list against the live Hugging Face router catalog.
+- This `backend/` app is the local development copy; the Hugging Face Space runtime uses the root `app/` package.

@@ -4,10 +4,10 @@ Next.js UI for the fire-suppression simulation.
 
 ## What It Shows
 
-- Model selection and simulation start flow
+- Model selection from the backend's live Hugging Face model list
 - Map-based agent positions and fire placement
 - Water sources, coalition links, and leader markers
-- Live event chat with varied team messages
+- Live event chat with model-generated radio-style messages
 - End-of-game result banner with top performer info
 
 ## Run Locally
@@ -39,4 +39,5 @@ NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 
 - The frontend expects the backend to be running before placing a fire.
 - If the browser shows `Failed to fetch`, verify `http://localhost:8000/wake` first.
+- The model picker reads `GET /available-models` from the backend and sends those model ids back into the simulation.
 - The old volcano terminology has been removed from the current gameplay flow.

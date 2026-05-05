@@ -154,43 +154,54 @@ export default function Page() {
         simState.simulation_id,
           (msg) => {
             // store the full tick message (state + events) for richer analysis
-            setTickHistory(prev => [...prev, msg])
-          if (msg.type === "finished") {
-            if (msg.state) {
-              setSimState(msg.state)
-              setWinnerLabel(msg.state.winner_model || null)
+            setTickHistory(prev => {
+              const next = [...prev, msg]
+
+              // update sim state from the incoming message
+              if (msg.state) setSimState(msg.state)
+
+              // convert events into chat messages for UI
+              if (msg.events) {
+                const newMsgs = msg.events.map((e: any) => {
+                    if (e.type === 'message') return { agent_id: e.model, text: e.content, type: 'message' }
+                    if (e.type === 'death') return { agent_id: e.model, text: '', type: 'death' }
+                    if (e.type === 'alliance_proposal') return { agent_id: e.from_model, text: '', type: 'alliance_proposal', to_model: e.to_model }
+                    if (e.type === 'alliance_accept') return { agent_id: e.model_a, text: '', type: 'alliance_accept', to_model: e.model_b }
+                    if (e.type === 'alliance_reject') return { agent_id: e.from_model, text: '', type: 'alliance_reject', to_model: e.to_model }
+                    return null
+                }).filter(Boolean)
+                setChatMessages(prevMsgs => [...prevMsgs, ...newMsgs])
+              }
+
+              if (msg.chat) {
+                const chatMsgs = msg.chat.map((entry: any) => ({
+                  agent_id: entry.agent_id,
+                  text: entry.message,
+                  type: 'message',
+                }))
+                setChatMessages(prevMsgs => [...prevMsgs, ...chatMsgs])
+              }
+
+              // If simulation finished, mark gameover and compute final report using full tick history
+              if (msg.type === 'finished' || msg.state?.status === 'finished') {
+                const finalState = msg.state || (msg.type === 'finished' ? msg.state : null)
+                if (finalState) {
+                  setWinnerLabel(finalState.winner_model || null)
+                }
+                setAppState('gameover')
+                const report = buildReport(next)
+                setReportData(report)
+              }
+
+              return next
+            })
+
+            // if the message was an immediate finished payload without state (rare), still handle
+            if (msg.type === "finished" && !msg.state) {
+              setAppState("gameover")
+              return
             }
-            setAppState("gameover")
-            return
-          }
-          if (msg.state) setSimState(msg.state)
-          if (msg.events) {
-            const newMsgs = msg.events.map((e: any) => {
-                if (e.type === 'message') return { agent_id: e.model, text: e.content, type: 'message' }
-                if (e.type === 'death') return { agent_id: e.model, text: '', type: 'death' }
-                if (e.type === 'alliance_proposal') return { agent_id: e.from_model, text: '', type: 'alliance_proposal', to_model: e.to_model }
-                if (e.type === 'alliance_accept') return { agent_id: e.model_a, text: '', type: 'alliance_accept', to_model: e.model_b }
-                if (e.type === 'alliance_reject') return { agent_id: e.from_model, text: '', type: 'alliance_reject', to_model: e.to_model }
-                return null
-            }).filter(Boolean)
-            setChatMessages(prev => [...prev, ...newMsgs])
-          }
-          if (msg.chat) {
-            const chatMsgs = msg.chat.map((entry: any) => ({
-              agent_id: entry.agent_id,
-              text: entry.message,
-              type: 'message',
-            }))
-            setChatMessages(prev => [...prev, ...chatMsgs])
-          }
-          if (msg.state?.status === "finished") {
-            setWinnerLabel(msg.state.winner_model || null)
-            setAppState("gameover")
-            // prepare report
-            const report = buildReport([...tickHistory, msg])
-            setReportData(report)
-          }
-        },
+          },
         () => setAppState("gameover")
       )
       wsRef.current = ws

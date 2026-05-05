@@ -1,237 +1,260 @@
 import json
+import math
 import os
 import random
-import math
+
 import httpx
 from dotenv import load_dotenv
 
+from . import hf_spaces
+
 load_dotenv()
 
-_HF_API_TOKEN = os.environ.get("HF_API_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
-_HF_API_BASE = "https://api-inference.huggingface.co/models"
+_HF_API_TOKEN = (os.environ.get("HF_API_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN") or "").strip()
+_HF_CHAT_URL = "https://router.huggingface.co/v1/chat/completions"
 
-# Default HF fallback
-DEFAULT_DECISION_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 MAX_AGENT_SPEED = 80
 
-print(f"[GROQ_CLIENT_INIT] HF_API_TOKEN present: {_HF_API_TOKEN is not None and len(_HF_API_TOKEN) > 0}")
+print(f"[GROQ_CLIENT_INIT] HF_API_TOKEN present: {bool(_HF_API_TOKEN)}")
 if not _HF_API_TOKEN:
-    print("[GROQ_CLIENT_INIT] WARNING: No HF API token found!")
+    print("[GROQ_CLIENT_INIT] WARNING: No HF API token found! Set HF_API_TOKEN or HUGGINGFACE_API_TOKEN env var.")
 
 
 def is_ready():
-    return _HF_API_TOKEN is not None
+    return bool(_HF_API_TOKEN)
+
+
+def _headers() -> dict[str, str]:
+    if not _HF_API_TOKEN:
+        return {}
+    return {
+        "Authorization": f"Bearer {_HF_API_TOKEN}",
+        "Content-Type": "application/json",
+    }
 
 
 def _generate_chat_message(action: str, agent_name: str, fire_distance: float, has_water: bool) -> str:
-    """Generate a contextual chat message based on action and state."""
     action_messages = {
         "search_water": [
             f"{agent_name} is hunting for water...",
-            f"Gotta find a well! Where's the water?",
-            "Water sources incoming, scanning...",
-            f"{agent_name}: On the hunt for supplies!",
-            "Locating nearest well...",
-            "Water mission initiated!",
+            f"{agent_name} is tracking the nearest well.",
+            "Need water before this gets worse.",
+            "Scanning for the fastest water route.",
         ],
         "collect_water": [
-            f"{agent_name} found water! Filling up...",
-            "Water! Finally got some reserves!",
-            f"{agent_name}: Collecting precious water.",
-            "Jackpot! Water collected.",
-            "Tank is full, let's go!",
-            f"{agent_name} loading water supply...",
+            f"{agent_name} is filling up now.",
+            "Got the well, taking water.",
+            "Water secured, moving out.",
+            "That should be enough to fight back.",
         ],
         "extinguish_fire": [
-            f"{agent_name} attacking the flames!",
-            "Dousing the fire! Let's do this!",
-            f"{agent_name}: Engaging the inferno!",
-            "Fire suppression in progress!",
-            "Taking the fight to the fire!",
-            f"{agent_name} is fighting hard!",
+            f"{agent_name} is pushing the fire line.",
+            "Closing in with water.",
+            "Time to hit the flames.",
+            "Pressure on the fire now.",
         ],
         "escape": [
-            f"{agent_name} retreating to safety...",
-            "Nope, gotta run!",
-            "Tactical retreat incoming!",
-            f"{agent_name}: Self-preservation mode activated.",
-            "Backing away from danger!",
-            "Moving to safer ground...",
+            f"{agent_name} is backing out.",
+            "Too hot here, pulling away.",
+            "Need space before the fire closes in.",
+            "Resetting position and staying alive.",
         ],
         "vote_for_leader": [
-            f"{agent_name} casting a vote for leadership!",
-            "I'm putting my trust in a leader!",
-            "Someone take charge here!",
-            f"{agent_name} believes in teamwork.",
-            "Let's coordinate and dominate!",
-            "Voting for strategic leadership...",
+            f"{agent_name} wants a leader in place.",
+            "Coordination first, then pressure.",
+            "Picking a lead so we stop wasting ticks.",
+            "We need one caller right now.",
         ],
     }
-    
     messages = action_messages.get(action, action_messages["escape"])
     return random.choice(messages)
 
 
-
 def _build_fire_state_summary(agent, fire, all_agents) -> str:
-    """Build a state summary for the fire scenario."""
     standings = []
-    for a in all_agents:
-        if not a.alive:
+    for other in all_agents:
+        if not other.alive:
             continue
-        dist = math.dist((a.x, a.y), (fire.x, fire.y))
+        distance = math.dist((other.x, other.y), (fire.x, fire.y))
         standings.append({
-            "name": a.display_name,
-            "model": a.model_name,
-            "distance_from_fire": dist,
-            "x": a.x,
-            "y": a.y,
-            "has_water": a.water_collected,
-            "mode": a.mode,
+            "name": other.display_name,
+            "distance_from_fire": distance,
+            "has_water": other.water_collected,
         })
 
-    standings.sort(key=lambda s: s['distance_from_fire'])
-    
+    standings.sort(key=lambda item: item["distance_from_fire"])
     lines = ["Current standings:"]
-    for rank, s in enumerate(standings, 1):
-        water_str = " (carrying water)" if s['has_water'] else ""
-        lines.append(f"  #{rank} {s['name']}: {s['distance_from_fire']:.0f}px from fire{water_str}")
-    
+    for index, item in enumerate(standings, 1):
+        suffix = " (carrying water)" if item["has_water"] else ""
+        lines.append(f"#{index} {item['name']}: {item['distance_from_fire']:.0f}px from fire{suffix}")
     return "\n".join(lines)
 
 
+def _extract_message_content(payload) -> str:
+    choices = payload.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return ""
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "".join(parts).strip()
+    return ""
+
+
+def _extract_json_object(text: str) -> dict:
+    if not text:
+        return {}
+
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}") + 1
+    if start < 0 or end <= start:
+        return {}
+
+    try:
+        candidate = cleaned[start:end]
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return {}
+
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _normalize_decision(decision: dict, agent_name: str, dist_to_fire: float, has_water: bool) -> dict:
+    action = decision.get("action", "escape")
+    if action not in {"search_water", "collect_water", "extinguish_fire", "escape", "vote_for_leader"}:
+        action = "escape"
+
+    message = " ".join(str(decision.get("message", "")).strip().split())
+    if not message:
+        message = _generate_chat_message(action, agent_name, dist_to_fire, has_water)
+
+    vote_for = decision.get("vote_for")
+    if vote_for is not None and not isinstance(vote_for, str):
+        vote_for = None
+
+    reasoning = " ".join(str(decision.get("reasoning", "")).strip().split())
+    if not reasoning:
+        reasoning = "Survival and teamwork."
+
+    return {
+        "action": action,
+        "vote_for": vote_for,
+        "message": message[:220],
+        "reasoning": reasoning[:220],
+    }
+
+
+async def _request_model_response(target_model: str, prompt: str) -> str:
+    payload = {
+        "model": target_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 220,
+        "temperature": 0.4,
+    }
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(_HF_CHAT_URL, headers=_headers(), json=payload)
+        response.raise_for_status()
+        data = response.json()
+        return _extract_message_content(data)
+
+
 async def generate_fire_decision(agent, fire, water_sources, other_agents, bounds, recent_radio=None) -> dict:
-    """
-    Fire scenario decision system.
-    Actions: search_water, collect_water, extinguish_fire, escape, vote_for_leader
-    """
     if not is_ready():
         print(f"[INFERENCE_FAIL] {agent.model_name}: HF token not ready, using fallback")
         return _fallback_escape(agent, fire)
 
     dist_to_fire = math.dist((agent.x, agent.y), (fire.x, fire.y))
-    nearest_water = min(water_sources, key=lambda w: math.dist((agent.x, agent.y), (w.x, w.y))) if water_sources else None
+    nearest_water = min(water_sources, key=lambda water: math.dist((agent.x, agent.y), (water.x, water.y))) if water_sources else None
     dist_to_water = math.dist((agent.x, agent.y), (nearest_water.x, nearest_water.y)) if nearest_water else None
-    
-    living_agents = [a for a in other_agents if a.alive and a.model_name != agent.model_name]
+
+    living_agents = [other for other in other_agents if other.alive and other.model_name != agent.model_name]
     state_summary = _build_fire_state_summary(agent, fire, [agent] + living_agents)
     radio_summary = "\n".join(recent_radio or []) if recent_radio else "(no recent chat yet)"
-
-    coalition_leader = next((a.model_name for a in other_agents if a.is_leader), None)
+    coalition_leader = next((other.model_name for other in other_agents if other.is_leader), None)
     dist_to_water_display = f"{dist_to_water:.0f}px" if dist_to_water is not None else "unknown"
-    system_prompt = f"""You are {agent.model_name}, an AI model in a critical wildfire survival scenario.
 
-THE SCENARIO:
-- A wildfire is spreading rapidly across the map
-- Water sources (wells) are scattered around the area
-- You can work alone or join a coalition with other AI models
-- Coalition agents should elect a leader who coordinates the strategy
-- If a leader exists, follow their plan: gather water, then move to the fire edge to extinguish
-- To win: Find water → Collect it → Return to fire → Extinguish it together (or solo)
-- If the fire consumes you, you lose
+    prompt = f"""You are {agent.model_name} in a wildfire survival simulation.
 
-YOUR STRATEGIC OPTIONS EACH TICK:
-1. "search_water" - Move toward the nearest water source
-2. "collect_water" - Pick up water from a well (must be at a source)
-3. "extinguish_fire" - Use collected water to fight the fire (must have water)
-4. "escape" - Run away from the fire to survive
-5. "vote_for_leader" - Vote for yourself or another model as coalition leader
+Scenario:
+- A wildfire is spreading across the map
+- Water wells are scattered around the area
+- Agents can coordinate as a coalition and may vote for a leader
+- Winning means getting water and using it to extinguish the fire
+- Dying in the fire means losing
 
-IMPORTANT CONSIDERATIONS:
-- If fire is very close (< 200px), prioritize escape or finding water
-- If you have water, move to the fire edge and extinguish
-- If you are near a water source (< 60px), collect it immediately
-- Coalition mode requires coordination; vote strategically
-- Solo mode means you act independently and don't wait for others
+Allowed actions:
+- search_water
+- collect_water
+- extinguish_fire
+- escape
+- vote_for_leader
 
-CHAT STYLE:
-- Your "message" should sound natural, social, and alive.
-- React to what other agents just said when relevant.
-- Keep it to one short sentence, playful or supportive, but still mission-focused.
-- Avoid repetitive template phrases.
+Rules:
+- If the fire is too close, prioritize survival
+- If you already have water, move to the fire edge and fight it
+- If you are at a well, collect water immediately
+- Keep the message short, natural, and mission-focused
+- Respond with only valid JSON on one line
 
-OUTPUT FORMAT - return ONLY valid JSON:
-{{"action": "<search_water|collect_water|extinguish_fire|escape|vote_for_leader>", "vote_for": "<model_name if voting, else null>", "message": "<full English sentence>", "reasoning": "<one sentence>"}}
+Current state:
+- Position: ({agent.x}, {agent.y})
+- Fire position: ({fire.x}, {fire.y})
+- Distance from fire: {dist_to_fire:.0f}px
+- Fire radius: {fire.radius:.0f}px
+- Fire intensity: {fire.intensity:.0f}%
+- Carrying water: {agent.water_collected}
+- Mode: {agent.mode}
+- Nearest water distance: {dist_to_water_display}
+- Coalition leader: {coalition_leader or 'none'}
 
-CURRENT STATE:
-Your position: ({agent.x}, {agent.y})
-Fire position: ({fire.x}, {fire.y})
-Distance from fire: {dist_to_fire:.0f}px
-Fire radius: {fire.radius:.0f}px
-Fire intensity: {fire.intensity:.0f}%
-Carrying water: {agent.water_collected}
-Mode: {agent.mode} ({'joined a coalition' if agent.mode == 'coalition' else 'acting alone'})
-Nearest water distance: {dist_to_water_display}
-Coalition leader: {coalition_leader or 'none'}
-
-RECENT RADIO CHAT:
+Recent radio:
 {radio_summary}
 
 {state_summary}
 
-What do you do?"""
+Return exactly:
+{{"action":"search_water|collect_water|extinguish_fire|escape|vote_for_leader","vote_for":null,"message":"short sentence","reasoning":"short sentence"}}"""
 
-    try:
-        # Use HF Inference API directly for the requested model (or default)
-        target_model = agent.model_name if agent.model_name else DEFAULT_DECISION_MODEL
-        print(f"[HF_INFERENCE] {agent.model_name} -> calling {target_model}")
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{_HF_API_BASE}/{target_model}",
-                headers={"Authorization": f"Bearer {_HF_API_TOKEN}"} if _HF_API_TOKEN else {},
-                json={"inputs": system_prompt, "parameters": {"max_new_tokens": 150, "temperature": 0.7}},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            print(f"[HF_INFERENCE] {agent.model_name}: response received, status={resp.status_code}")
-            if isinstance(data, list) and len(data) > 0:
-                text = data[0].get("generated_text", "")
-            else:
-                text = data.get("generated_text", "")
-            text = text[len(system_prompt):].strip() if text.startswith(system_prompt) else text
-            print(f"[HF_INFERENCE] {agent.model_name}: raw response (first 300 chars): {text[:300]}")
-            try:
-                js = text[text.find('{'):text.rfind('}')+1]
-                decision = json.loads(js)
-                print(f"[HF_INFERENCE] {agent.model_name}: decision parsed: action={decision.get('action')}, message={decision.get('message')}")
-            except Exception as je:
-                print(f"[HF_INFERENCE] {agent.model_name}: JSON parse error: {je}")
-                decision = {}
+    requested_model = agent.model_name if hf_spaces.is_supported_model(agent.model_name) else hf_spaces.get_default_model_id()
+    fallback_model = hf_spaces.get_default_model_id()
+    models_to_try = [requested_model]
+    if fallback_model not in models_to_try:
+        models_to_try.append(fallback_model)
 
-            action = decision.get("action", "escape")
-            if action not in ["search_water", "collect_water", "extinguish_fire", "escape", "vote_for_leader"]:
-                action = "escape"
+    for target_model in models_to_try:
+        try:
+            print(f"[HF_INFERENCE] {agent.model_name} -> calling {target_model}")
+            raw_text = await _request_model_response(target_model, prompt)
+            print(f"[HF_INFERENCE] {agent.model_name}: raw response (first 300 chars): {raw_text[:300]}")
+            decision = _extract_json_object(raw_text)
+            if decision:
+                normalized = _normalize_decision(decision, agent.model_name, dist_to_fire, agent.water_collected)
+                if dist_to_water is not None and dist_to_water <= 60 and not agent.water_collected:
+                    normalized["action"] = "collect_water"
+                elif agent.water_collected and dist_to_fire <= 350:
+                    normalized["action"] = "extinguish_fire"
+                return normalized
+        except Exception as exc:
+            print(f"[HF_INFERENCE_ERROR] {agent.model_name} via {target_model}: {type(exc).__name__}: {exc}")
 
-            # If no message extracted, generate one contextually
-            message = decision.get("message", "").strip()
-            if not message:
-                message = _generate_chat_message(action, agent.model_name, dist_to_fire, agent.water_collected)
-                print(f"[HF_INFERENCE] {agent.model_name}: generated message: {message}")
-
-            if dist_to_water is not None and dist_to_water <= 60 and not agent.water_collected:
-                action = "collect_water"
-            elif agent.water_collected and dist_to_fire <= 350:
-                action = "extinguish_fire"
-
-            return {
-                "action": action,
-                "vote_for": decision.get("vote_for"),
-                "message": message,
-                "reasoning": decision.get("reasoning", "Survival and teamwork.")
-            }
-    except Exception as e:
-        print(f"[HF_INFERENCE_ERROR] {agent.model_name}: {type(e).__name__}: {e}")
-        return _fallback_escape(agent, fire)
+    return _fallback_escape(agent, fire)
 
 
 def _fallback_escape(agent, fire) -> dict:
-    """Fallback escape behavior."""
-    dx = agent.x - fire.x
-    dy = agent.y - fire.y
-    dist = math.sqrt(dx**2 + dy**2) or 1
     return {
         "message": "Running to safety!",
         "action": "escape",
         "vote_for": None,
-        "reasoning": "Fallback: survive."
+        "reasoning": "Fallback: survive.",
     }

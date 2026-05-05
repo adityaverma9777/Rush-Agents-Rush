@@ -5,6 +5,7 @@ import random
 import uuid
 import os
 import time
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from .models import SimulationState, AgentModel, TickResponse, FireScenario, WaterSource
 from .simulation import SimulationEngine, TICK_INTERVAL_SECONDS

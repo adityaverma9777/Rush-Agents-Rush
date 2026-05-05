@@ -54,6 +54,14 @@ class PlaceFireRequest(BaseModel):
 class TickRequest(BaseModel):
     simulation_id: str
 
+@app.get("/")
+async def root():
+    return {
+        "service": "rush-agents-backend",
+        "status": "ok",
+        "groq_available": groq_client.is_ready(),
+    }
+
 @app.get("/wake")
 async def wake():
     return {

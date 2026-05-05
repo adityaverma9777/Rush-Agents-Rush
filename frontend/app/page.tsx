@@ -24,15 +24,17 @@ export default function Page() {
         const state = h.state || h
         const a = (state.agents || []).find((x: any) => x.model_name === m.id)
         return a ? { x: a.x, y: a.y, water: a.water_collected, status: a.status, extinguish_score: a.extinguish_score || 0, last_message: a.last_message } : null
-      }).filter(Boolean)
+      }).filter(Boolean) as Array<{ x: number, y: number, water: number, status: string, extinguish_score: number, last_message: string }>
 
       let distance = 0
       for (let i = 1; i < positions.length; i++) {
         const p0 = positions[i-1]
         const p1 = positions[i]
-        const dx = p1.x - p0.x
-        const dy = p1.y - p0.y
-        distance += Math.sqrt(dx*dx + dy*dy)
+        if (p0 && p1) {
+          const dx = p1.x - p0.x
+          const dy = p1.y - p0.y
+          distance += Math.sqrt(dx*dx + dy*dy)
+        }
       }
 
       let water_picks = 0

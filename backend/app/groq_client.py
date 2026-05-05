@@ -45,7 +45,7 @@ def _build_fire_state_summary(agent, fire, all_agents) -> str:
     return "\n".join(lines)
 
 
-async def generate_fire_decision(agent, fire, water_sources, other_agents, bounds) -> dict:
+async def generate_fire_decision(agent, fire, water_sources, other_agents, bounds, recent_radio=None) -> dict:
     """
     Fire scenario decision system.
     Actions: search_water, collect_water, extinguish_fire, escape, vote_for_leader
@@ -59,6 +59,7 @@ async def generate_fire_decision(agent, fire, water_sources, other_agents, bound
     
     living_agents = [a for a in other_agents if a.alive and a.model_name != agent.model_name]
     state_summary = _build_fire_state_summary(agent, fire, [agent] + living_agents)
+    radio_summary = "\n".join(recent_radio or []) if recent_radio else "(no recent chat yet)"
 
     coalition_leader = next((a.model_name for a in other_agents if a.is_leader), None)
     dist_to_water_display = f"{dist_to_water:.0f}px" if dist_to_water is not None else "unknown"
@@ -87,6 +88,12 @@ IMPORTANT CONSIDERATIONS:
 - Coalition mode requires coordination; vote strategically
 - Solo mode means you act independently and don't wait for others
 
+CHAT STYLE:
+- Your "message" should sound natural, social, and alive.
+- React to what other agents just said when relevant.
+- Keep it to one short sentence, playful or supportive, but still mission-focused.
+- Avoid repetitive template phrases.
+
 OUTPUT FORMAT - return ONLY valid JSON:
 {{"action": "<search_water|collect_water|extinguish_fire|escape|vote_for_leader>", "vote_for": "<model_name if voting, else null>", "message": "<full English sentence>", "reasoning": "<one sentence>"}}
 
@@ -100,6 +107,9 @@ Carrying water: {agent.water_collected}
 Mode: {agent.mode} ({'joined a coalition' if agent.mode == 'coalition' else 'acting alone'})
 Nearest water distance: {dist_to_water_display}
 Coalition leader: {coalition_leader or 'none'}
+
+RECENT RADIO CHAT:
+{radio_summary}
 
 {state_summary}
 

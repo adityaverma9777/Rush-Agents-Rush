@@ -49,6 +49,57 @@ def _is_hf_model(model_id: str) -> bool:
     return model_id in HF_MODELS
 
 
+def _generate_chat_message(action: str, agent_name: str, fire_distance: float, has_water: bool) -> str:
+    """Generate a contextual chat message based on action and state."""
+    import random
+    
+    action_messages = {
+        "search_water": [
+            f"{agent_name} is hunting for water...",
+            f"Gotta find a well! Where's the water?",
+            "Water sources incoming, scanning...",
+            f"{agent_name}: On the hunt for supplies!",
+            "Locating nearest well...",
+            "Water mission initiated!",
+        ],
+        "collect_water": [
+            f"{agent_name} found water! Filling up...",
+            "Water! Finally got some reserves!",
+            f"{agent_name}: Collecting precious water.",
+            "Jackpot! Water collected.",
+            "Tank is full, let's go!",
+            f"{agent_name} loading water supply...",
+        ],
+        "extinguish_fire": [
+            f"{agent_name} attacking the flames!",
+            "Dousing the fire! Let's do this!",
+            f"{agent_name}: Engaging the inferno!",
+            "Fire suppression in progress!",
+            "Taking the fight to the fire!",
+            f"{agent_name} is fighting hard!",
+        ],
+        "escape": [
+            f"{agent_name} retreating to safety...",
+            "Nope, gotta run!",
+            "Tactical retreat incoming!",
+            f"{agent_name}: Self-preservation mode activated.",
+            "Backing away from danger!",
+            "Moving to safer ground...",
+        ],
+        "vote_for_leader": [
+            f"{agent_name} casting a vote for leadership!",
+            "I'm putting my trust in a leader!",
+            "Someone take charge here!",
+            f"{agent_name} believes in teamwork.",
+            "Let's coordinate and dominate!",
+            "Voting for strategic leadership...",
+        ],
+    }
+    
+    messages = action_messages.get(action, action_messages["escape"])
+    return random.choice(messages)
+
+
 def _build_fire_state_summary(agent, fire, all_agents) -> str:
     """Build a state summary for the fire scenario."""
     standings = []
@@ -174,13 +225,16 @@ Respond with ONLY valid JSON on a single line (no markdown, no code block):
 
             text = text[len(system_prompt):].strip() if text.startswith(system_prompt) else text
 
+            # DEBUG: log raw response for inspection
+            print(f"[HF_INFERENCE] {agent.model_name}: raw response (first 300 chars): {text[:300]}")
+
             try:
                 json_start = text.find('{')
                 json_end = text.rfind('}') + 1
                 if json_start >= 0 and json_end > json_start:
                     json_str = text[json_start:json_end]
                     decision = json.loads(json_str)
-                    print(f"[HF_INFERENCE] {agent.model_name}: decision parsed: action={decision.get('action')}")
+                    print(f"[HF_INFERENCE] {agent.model_name}: decision parsed: action={decision.get('action')}, message={decision.get('message')}")
                 else:
                     print(f"[HF_INFERENCE] {agent.model_name}: no JSON found in response")
                     decision = {}
@@ -192,6 +246,12 @@ Respond with ONLY valid JSON on a single line (no markdown, no code block):
         if action not in ["search_water", "collect_water", "extinguish_fire", "escape", "vote_for_leader"]:
             action = "escape"
 
+        # If no message extracted, generate one contextually
+        message = decision.get("message", "").strip()
+        if not message:
+            message = _generate_chat_message(action, agent.model_name, dist_to_fire, agent.water_collected)
+            print(f"[HF_INFERENCE] {agent.model_name}: generated message: {message}")
+
         if dist_to_water is not None and dist_to_water <= 60 and not agent.water_collected:
             action = "collect_water"
         elif agent.water_collected and dist_to_fire <= 350:
@@ -200,7 +260,7 @@ Respond with ONLY valid JSON on a single line (no markdown, no code block):
         return {
             "action": action,
             "vote_for": decision.get("vote_for"),
-            "message": decision.get("message", "Moving strategically."),
+            "message": message,
             "reasoning": decision.get("reasoning", "Survival and teamwork.")
         }
     except Exception as e:

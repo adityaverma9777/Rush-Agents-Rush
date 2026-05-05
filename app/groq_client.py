@@ -14,9 +14,14 @@ _HF_API_BASE = "https://api-inference.huggingface.co/models"
 DEFAULT_DECISION_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 MAX_AGENT_SPEED = 80
 
+print(f"[GROQ_CLIENT_INIT] HF_API_TOKEN present: {_HF_API_TOKEN is not None and len(_HF_API_TOKEN) > 0}")
+if not _HF_API_TOKEN:
+    print("[GROQ_CLIENT_INIT] WARNING: No HF API token found!")
+
 
 def is_ready():
     return _HF_API_TOKEN is not None
+
 
 
 def _build_fire_state_summary(agent, fire, all_agents) -> str:
@@ -51,7 +56,8 @@ async def generate_fire_decision(agent, fire, water_sources, other_agents, bound
     Fire scenario decision system.
     Actions: search_water, collect_water, extinguish_fire, escape, vote_for_leader
     """
-    if not _client:
+    if not is_ready():
+        print(f"[INFERENCE_FAIL] {agent.model_name}: HF token not ready, using fallback")
         return _fallback_escape(agent, fire)
 
     dist_to_fire = math.dist((agent.x, agent.y), (fire.x, fire.y))
@@ -119,6 +125,7 @@ What do you do?"""
     try:
         # Use HF Inference API directly for the requested model (or default)
         target_model = agent.model_name if agent.model_name else DEFAULT_DECISION_MODEL
+        print(f"[HF_INFERENCE] {agent.model_name} -> calling {target_model}")
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{_HF_API_BASE}/{target_model}",
@@ -127,6 +134,7 @@ What do you do?"""
             )
             resp.raise_for_status()
             data = resp.json()
+            print(f"[HF_INFERENCE] {agent.model_name}: response received, status={resp.status_code}")
             if isinstance(data, list) and len(data) > 0:
                 text = data[0].get("generated_text", "")
             else:
@@ -135,7 +143,9 @@ What do you do?"""
             try:
                 js = text[text.find('{'):text.rfind('}')+1]
                 decision = json.loads(js)
-            except Exception:
+                print(f"[HF_INFERENCE] {agent.model_name}: decision parsed: action={decision.get('action')}")
+            except Exception as je:
+                print(f"[HF_INFERENCE] {agent.model_name}: JSON parse error: {je}")
                 decision = {}
 
             action = decision.get("action", "escape")
@@ -154,7 +164,7 @@ What do you do?"""
                 "reasoning": decision.get("reasoning", "Survival and teamwork.")
             }
     except Exception as e:
-        print(f"HF inference failed for {agent.model_name}: {e}")
+        print(f"[HF_INFERENCE_ERROR] {agent.model_name}: {type(e).__name__}: {e}")
         return _fallback_escape(agent, fire)
 
 

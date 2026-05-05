@@ -13,6 +13,11 @@ _HF_API_BASE = "https://api-inference.huggingface.co/models"
 
 MAX_AGENT_SPEED = 80
 
+# Debug: log token status on startup
+print(f"[GROQ_CLIENT_INIT] HF_API_TOKEN present: {_HF_API_TOKEN is not None and len(_HF_API_TOKEN) > 0}")
+if not _HF_API_TOKEN:
+    print("[GROQ_CLIENT_INIT] WARNING: No HF API token found! Set HF_API_TOKEN or HUGGINGFACE_API_TOKEN env var.")
+
 # Curated HF model ids (small → large)
 HF_MODELS = [
     "google/flan-t5-small",
@@ -76,8 +81,7 @@ async def generate_fire_decision(agent, fire, water_sources, other_agents, bound
     Fire scenario decision system supporting both Groq and HF models.
     Actions: search_water, collect_water, extinguish_fire, escape, vote_for_leader
     """
-    if not is_ready():
-        return _fallback_escape(agent, fire)
+    if not is_ready():        print(f"[INFERENCE_FAIL] {agent.model_name}: HF token not ready, using fallback")        return _fallback_escape(agent, fire)
 
     dist_to_fire = math.dist((agent.x, agent.y), (fire.x, fire.y))
     nearest_water = min(water_sources, key=lambda w: math.dist((agent.x, agent.y), (w.x, w.y))) if water_sources else None
@@ -144,6 +148,7 @@ Respond with ONLY valid JSON on a single line (no markdown, no code block):
         # Always prefer HF models — if agent requested a HF model use it, otherwise
         # route to a default HF model from the list.
         target_model = agent.model_name if _is_hf_model(agent.model_name) else HF_MODELS[0]
+        print(f"[HF_INFERENCE] {agent.model_name} -> calling {target_model}")
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
@@ -160,6 +165,7 @@ Respond with ONLY valid JSON on a single line (no markdown, no code block):
             )
             response.raise_for_status()
             data = response.json()
+            print(f"[HF_INFERENCE] {agent.model_name}: response received, status={response.status_code}")
 
             if isinstance(data, list) and len(data) > 0:
                 text = data[0].get("generated_text", "")
@@ -174,9 +180,12 @@ Respond with ONLY valid JSON on a single line (no markdown, no code block):
                 if json_start >= 0 and json_end > json_start:
                     json_str = text[json_start:json_end]
                     decision = json.loads(json_str)
+                    print(f"[HF_INFERENCE] {agent.model_name}: decision parsed: action={decision.get('action')}")
                 else:
+                    print(f"[HF_INFERENCE] {agent.model_name}: no JSON found in response")
                     decision = {}
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as je:
+                print(f"[HF_INFERENCE] {agent.model_name}: JSON parse error: {je}")
                 decision = {}
         
         action = decision.get("action", "escape")
@@ -195,7 +204,7 @@ Respond with ONLY valid JSON on a single line (no markdown, no code block):
             "reasoning": decision.get("reasoning", "Survival and teamwork.")
         }
     except Exception as e:
-        print(f"Error calling inference for {agent.model_name}: {e}")
+        print(f"[HF_INFERENCE_ERROR] {agent.model_name}: {type(e).__name__}: {e}")
         return _fallback_escape(agent, fire)
 
 

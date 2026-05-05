@@ -2,13 +2,16 @@ import json
 import os
 import random
 import math
+import httpx
 from groq import AsyncGroq
 from dotenv import load_dotenv
 
 load_dotenv()
 
 _GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+_HF_API_TOKEN = os.environ.get("HF_API_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
 _client = AsyncGroq(api_key=_GROQ_API_KEY) if _GROQ_API_KEY else None
+_HF_API_BASE = "https://api-inference.huggingface.co/models"
 
 DEFAULT_DECISION_MODEL = "mixtral-8x7b-32768"
 MAX_AGENT_SPEED = 80
@@ -144,7 +147,49 @@ What do you do?"""
             "reasoning": decision.get("reasoning", "Survival and teamwork.")
         }
     except Exception as e:
+        # If Groq fails (rate limits, network), try a HF fallback when possible
         print(f"Error calling groq for {agent.model_name}: {e}")
+        err = str(e).lower()
+        if _HF_API_TOKEN and ("rate limit" in err or "rate_limit" in err or "429" in err):
+            fallback_hf = "mistralai/Mistral-7B-Instruct-v0.2"
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    resp = await client.post(
+                        f"{_HF_API_BASE}/{fallback_hf}",
+                        headers={"Authorization": f"Bearer {_HF_API_TOKEN}"},
+                        json={"inputs": system_prompt, "parameters": {"max_new_tokens": 150, "temperature": 0.7}},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        text = data[0].get("generated_text", "")
+                    else:
+                        text = data.get("generated_text", "")
+                    text = text[len(system_prompt):].strip() if text.startswith(system_prompt) else text
+                    try:
+                        js = text[text.find('{'):text.rfind('}')+1]
+                        decision = json.loads(js)
+                    except Exception:
+                        decision = {}
+
+                    action = decision.get("action", "escape")
+                    if action not in ["search_water", "collect_water", "extinguish_fire", "escape", "vote_for_leader"]:
+                        action = "escape"
+
+                    if dist_to_water is not None and dist_to_water <= 60 and not agent.water_collected:
+                        action = "collect_water"
+                    elif agent.water_collected and dist_to_fire <= 350:
+                        action = "extinguish_fire"
+
+                    return {
+                        "action": action,
+                        "vote_for": decision.get("vote_for"),
+                        "message": decision.get("message", "Moving strategically."),
+                        "reasoning": decision.get("reasoning", "Survival and teamwork.")
+                    }
+            except Exception as e2:
+                print(f"HF fallback failed: {e2}")
+                return _fallback_escape(agent, fire)
         return _fallback_escape(agent, fire)
 
 

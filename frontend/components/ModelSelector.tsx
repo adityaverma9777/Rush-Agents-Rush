@@ -77,7 +77,7 @@ export default function ModelSelector({
         <h3 className="text-[10px] font-mono text-white/30 uppercase tracking-[0.2em] mb-4">
           Select Survivors ({models.length}/6)
         </h3>
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 max-h-[400px] overflow-y-auto overflow-x-hidden">
           {allModels.map((m) => {
             const isSelected = models.includes(m.id)
             return (

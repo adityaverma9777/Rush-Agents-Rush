@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-_HF_API_TOKEN = os.environ.get("HF_API_TOKEN")
+# Accept either HF_API_TOKEN or HUGGINGFACE_API_TOKEN for compatibility
+_HF_API_TOKEN = os.environ.get("HF_API_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
 _groq_client = AsyncGroq(api_key=_GROQ_API_KEY) if _GROQ_API_KEY else None
 _HF_API_BASE = "https://api-inference.huggingface.co/models"
 
@@ -44,6 +45,13 @@ HF_MODELS = [
     # Other strong models
     "EleutherAI/gpt-j-6B",
 ]
+
+# Mapping from premium Groq models to reasonable HF fallback model IDs
+# Used when Groq is unavailable but a HF token exists.
+GROQ_TO_HF_FALLBACK = {
+    "mixtral-8x7b-32768": "mistralai/Mistral-7B-Instruct-v0.2",
+    "llama2-70b-4096": "meta-llama/Llama-2-13b-chat-hf",
+}
 
 
 def is_ready():
@@ -171,6 +179,46 @@ Respond with ONLY valid JSON on a single line (no markdown, no code block):
                 timeout=3.0
             )
             decision = json.loads(completion.choices[0].message.content)
+        # If the agent requested a premium Groq model but Groq client is not configured,
+        # try to route the decision to a HF fallback model when possible.
+        elif _is_groq_model(agent.model_name) and not _groq_client and _HF_API_TOKEN:
+            fallback_model = GROQ_TO_HF_FALLBACK.get(agent.model_name)
+            if not fallback_model:
+                return _fallback_escape(agent, fire)
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{_HF_API_BASE}/{fallback_model}",
+                    headers={"Authorization": f"Bearer {_HF_API_TOKEN}"},
+                    json={
+                        "inputs": system_prompt,
+                        "parameters": {
+                            "max_new_tokens": 200,
+                            "temperature": 0.7,
+                            "top_p": 0.9,
+                        }
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if isinstance(data, list) and len(data) > 0:
+                    text = data[0].get("generated_text", "")
+                else:
+                    text = data.get("generated_text", "")
+
+                text = text[len(system_prompt):].strip() if text.startswith(system_prompt) else text
+
+                try:
+                    json_start = text.find('{')
+                    json_end = text.rfind('}') + 1
+                    if json_start >= 0 and json_end > json_start:
+                        json_str = text[json_start:json_end]
+                        decision = json.loads(json_str)
+                    else:
+                        decision = {}
+                except json.JSONDecodeError:
+                    decision = {}
         elif _is_hf_model(agent.model_name) and _HF_API_TOKEN:
             # Use HF Inference API for open-source models
             async with httpx.AsyncClient(timeout=10.0) as client:

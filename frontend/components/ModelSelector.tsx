@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { getAvailableModels } from "../lib/api"
 
 interface Model {
   id: string
@@ -25,8 +26,7 @@ export default function ModelSelector({
   useEffect(() => {
     async function fetchModels() {
       try {
-        const response = await fetch("http://localhost:8000/available-models")
-        const data = await response.json()
+        const data = await getAvailableModels()
         
         // Combine Groq and HF Spaces models
         const combined: Model[] = [

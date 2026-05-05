@@ -34,31 +34,43 @@ class SimulationEngine:
     def __init__(self, state: SimulationState) -> None:
         self.state = state
 
-    def _pick_message(self, action: str) -> str:
+    def _pick_message(self, action: str, current_fire_intensity: float | None = None) -> str:
+        fire_pct = f"{max(0.0, current_fire_intensity or 0.0):.0f}%"
         options = {
             "search_water": [
-                "Scanning for the nearest well.",
-                "Heading toward water to stock up.",
-                "Tracking a water source now.",
-                "Moving to secure water for the team.",
+                "Scanning for the nearest well. No pressure, just a giant fire.",
+                "Heading to water before this turns into a barbecue episode.",
+                "Tracking a water source now. Team hydration, then heroics.",
+                "On water duty. Someone queue victory music.",
+                "I see a well. Sprinting like my GPU is on turbo mode.",
             ],
             "collect_water": [
-                "Water secured. Moving to the fire line.",
-                "Got water. Heading to the fire edge.",
-                "Collected water. Time to extinguish.",
+                "Bucket secured. Fireline, here I come.",
+                "Got water. Time to humble these flames.",
+                "Water collected. Deploying splash protocol.",
+                "Locked and loaded with water. Let's cook the fire instead.",
             ],
             "extinguish_fire": [
-                "Pouring water at the fire edge.",
-                "Holding position and dousing flames.",
-                "Suppressing the fire with water.",
+                "Pouring at the edge. Flames, meet your uninstall button.",
+                "Holding position and dousing flames. Nice and steady.",
+                "Suppressing fire now. Keep the pressure on.",
+                "Splashing hard. Current fire level: " + fire_pct + ".",
             ],
             "escape": [
-                "Falling back to a safer position.",
-                "Repositioning away from the flames.",
-                "Retreating to avoid the fire front.",
+                "Tactical retreat. I prefer crispy code, not crispy me.",
+                "Repositioning away from the flames. Living agents win games.",
+                "Backing off from the fire front. Bravery includes not exploding.",
+            ],
+            "celebrate_extinguish": [
+                "Yes! Fire down to {fire_pct}. Keep pouring!",
+                "Let's go! We shaved it to {fire_pct}.",
+                "Big splash energy. Fire now at {fire_pct}.",
+                "Progress! Fire dropped to {fire_pct}. Team is cooking.",
+                "Huge play. Flames at {fire_pct} and falling.",
             ],
         }
-        return random.choice(options.get(action, ["Moving strategically."]))
+        template = random.choice(options.get(action, ["Moving strategically and staying optimistic."]))
+        return template.format(fire_pct=fire_pct)
 
     def _move_toward(self, agent: AgentModel, target_x: float, target_y: float, stop_distance: float = 0) -> None:
         dx = target_x - agent.x
@@ -239,7 +251,7 @@ class SimulationEngine:
                     dist_to_fire = math.dist((agent.x, agent.y), (fire.x, fire.y))
                     target_dist = max(fire.radius + FIRE_SAFE_BUFFER, 0)
                     self._move_toward(agent, fire.x, fire.y, stop_distance=target_dist)
-                    message = self._pick_message("extinguish_fire")
+                    message = self._pick_message("extinguish_fire", current_fire_intensity=fire.intensity)
                 else:
                     agent.status = "searching"
                     message = "Need water before I can extinguish."
@@ -287,6 +299,7 @@ class SimulationEngine:
                 agents_with_water.append(agent)
         
         if agents_with_water:
+            before_intensity = fire.intensity
             living_count = len([a for a in agents if a.alive]) or 1
             scale = max(0.5, min(2.0, 2.0 / living_count))
             per_agent_rate = BASE_EXTINGUISH_RATE * scale
@@ -300,7 +313,9 @@ class SimulationEngine:
             events.append(FireExtinguishedEvent(extinguished_by=extinguisher_names, fire_intensity=fire.intensity))
             for agent in agents_with_water:
                 agent.extinguish_score += per_agent_rate
-                events.append(MessageEvent(model=agent.model_name, content=f"Pouring water on the fire! Intensity dropping."))
+                events.append(MessageEvent(model=agent.model_name, content=self._pick_message("celebrate_extinguish", current_fire_intensity=fire.intensity)))
+                if before_intensity - fire.intensity >= 10:
+                    events.append(MessageEvent(model=agent.model_name, content="That's a big drop! Keep the chain going!"))
                 agent.water_collected = False
 
         return events

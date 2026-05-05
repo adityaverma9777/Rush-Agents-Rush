@@ -19,14 +19,18 @@ from . import groq_client
 from . import movement
 
 FIRE_GROWTH_RATE = 1.0  # radius growth per tick
-FIRE_INTENSITY_GROWTH = 0.9  # intensity per tick
-BASE_EXTINGUISH_RATE = 15.0  # baseline intensity reduction per agent
-MIN_EXTINGUISH_RATE = 8.0
-MAX_EXTINGUISH_RATE = 28.0
+FIRE_INTENSITY_GROWTH = 1.8  # intensity per tick (faster fire spread for urgency)
+BASE_EXTINGUISH_RATE = 28.0  # baseline intensity reduction per agent
+MIN_EXTINGUISH_RATE = 15.0
+MAX_EXTINGUISH_RATE = 40.0
 TICK_INTERVAL_SECONDS = 3
 WATER_PICKUP_RANGE = 40
 EXTINGUISH_RANGE = 45
 FIRE_SAFE_BUFFER = 10
+# Target game duration: 90-110 seconds (30-37 ticks)
+# Scaling: fewer agents = faster extinguish (shorter game)
+#          more agents = slower extinguish (longer game)
+# scale = (max_agents + 1) / (num_agents + 2) ensures inverse relationship
 
 class SimulationEngine:
     def __init__(self, state: SimulationState) -> None:
@@ -267,7 +271,11 @@ class SimulationEngine:
         
         if agents_with_water:
             living_count = len([a for a in agents if a.alive]) or 1
-            scale = max(0.5, min(2.0, 2.0 / living_count))
+            # Inverse scaling: fewer agents = higher drop rate (shorter game)
+            #                 more agents = lower drop rate (longer game)
+            # scale = (6 + 1) / (living_count + 2) ensures fewer agents get faster extinguish
+            scale = (7.0) / (living_count + 2.0)
+            scale = max(0.5, min(2.5, scale))
             per_agent_rate = BASE_EXTINGUISH_RATE * scale
             per_agent_rate = max(MIN_EXTINGUISH_RATE, min(MAX_EXTINGUISH_RATE, per_agent_rate))
             reduction = len(agents_with_water) * per_agent_rate

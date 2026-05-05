@@ -66,14 +66,14 @@ async def root():
     return {
         "service": "rush-agents-backend",
         "status": "ok",
-        "groq_available": groq_client.is_ready(),
+        "inference_ready": groq_client.is_ready(),
     }
 
 @app.get("/wake")
 async def wake():
     return {
         "warm": True,
-        "groq_available": groq_client.is_ready(),
+        "inference_ready": groq_client.is_ready(),
         "uptime_seconds": int(time.time() - START_TIME),
     }
 
@@ -106,6 +106,7 @@ async def start_simulation(req: StartSimulationRequest):
 
 @app.post("/place-fire", response_model=SimulationState)
 def place_fire(req: PlaceFireRequest):
+    print(f"\n[PLACE_FIRE] Called - sim_id={req.simulation_id}, total_active={len(active_simulations)}, keys={list(active_simulations.keys())}")
     sim = _get_or_404(req.simulation_id)
     if sim.status != "waiting_for_scenario":
         raise HTTPException(status_code=409, detail="Fire already placed or simulation finished.")

@@ -22,11 +22,27 @@ GROQ_PREMIUM_MODELS = [
 ]
 
 # Open-source models available via HF Inference API (unlimited calls)
+# Expanded list of free HF models (add your API token to access)
 HF_MODELS = [
+    # Fast, reliable models
     "mistralai/Mistral-7B-Instruct-v0.2",
+    "mistralai/Mistral-7B-Instruct-v0.1",
+    "HuggingFaceH4/zephyr-7b-beta",
+    "HuggingFaceH4/zephyr-7b",
+    # Quality-focused models
     "NousResearch/Nous-Hermes-2-Mistral-7B-DPO",
+    "NousResearch/Nous-Hermes-2-7b",
+    # Meta models
     "meta-llama/Llama-2-7b-chat-hf",
+    "meta-llama/Llama-2-13b-chat-hf",
+    "meta-llama/Llama-3-8b-Instruct",
+    # Instruction-tuned models
     "google/flan-t5-large",
+    "google/flan-t5-base",
+    # Falcon models
+    "tiiuae/falcon-7b-instruct",
+    # Other strong models
+    "EleutherAI/gpt-j-6B",
 ]
 
 

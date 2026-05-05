@@ -18,25 +18,17 @@ print(f"[GROQ_CLIENT_INIT] HF_API_TOKEN present: {_HF_API_TOKEN is not None and 
 if not _HF_API_TOKEN:
     print("[GROQ_CLIENT_INIT] WARNING: No HF API token found! Set HF_API_TOKEN or HUGGINGFACE_API_TOKEN env var.")
 
-# Curated HF model ids (small → large)
+# Curated HF model ids verified to work with HF Inference API
 HF_MODELS = [
-    "google/flan-t5-small",
-    "google/flan-t5-base",
-    "google/flan-t5-large",
-    "bigscience/bloom-3b",
-    "EleutherAI/gpt-neo-2.7B",
     "mistralai/Mistral-7B-Instruct-v0.2",
     "mistralai/Mistral-7B-Instruct-v0.1",
     "NousResearch/Nous-Hermes-2-7b",
-    "HuggingFaceH4/zephyr-7b",
+    "HuggingFaceH4/zephyr-7b-beta",
     "tiiuae/falcon-7b-instruct",
-    "EleutherAI/gpt-j-6B",
     "meta-llama/Llama-2-7b-chat-hf",
     "meta-llama/Llama-2-13b-chat-hf",
-    "meta-llama/Llama-2-70b-chat-hf",
-    "bigscience/bloom-176b",
     "stabilityai/stablelm-tuned-alpha-3b",
-    "meta-llama/Llama-3-8b-Instruct",
+    "WizardLM/WizardLM-7B-V1.0",
 ]
 
 

@@ -16,11 +16,13 @@ export default function Page() {
     if (!history || history.length === 0) return null
     const rounds = history.length
     const last = history[history.length - 1]
-    const models = (last.agents || []).map((a: any) => ({ id: a.model_name, display_name: a.display_name || a.model_name }))
+    const lastState = last.state || last
+    const models = (lastState.agents || []).map((a: any) => ({ id: a.model_name, display_name: a.display_name || a.model_name }))
 
     const per = models.map((m: any) => {
       const positions = history.map(h => {
-        const a = (h.agents || []).find((x: any) => x.model_name === m.id)
+        const state = h.state || h
+        const a = (state.agents || []).find((x: any) => x.model_name === m.id)
         return a ? { x: a.x, y: a.y, water: a.water_collected, status: a.status, extinguish_score: a.extinguish_score || 0, last_message: a.last_message } : null
       }).filter(Boolean)
 
@@ -38,22 +40,34 @@ export default function Page() {
       let logical_checks = 0
       const messages: Record<string, number> = {}
 
-      for (let i = 0; i < positions.length; i++) {
-        const cur = positions[i]
-        if (cur.last_message) messages[cur.last_message] = (messages[cur.last_message]||0)+1
-        if (i>0) {
-          const prev = positions[i-1]
-          if (!prev.water && cur.water) water_picks++
-          // logical check: when searching, distance to nearest water should decrease
-          if (cur.status === 'searching') {
-            // compute nearest water in this tick
-            const h = history[i]
-            const ws = h.water_sources || []
-            if (ws.length>0) {
-              const distPrev = Math.min(...ws.map((w: any)=> Math.hypot(prev.x - w.x, prev.y - w.y)))
-              const distCur = Math.min(...ws.map((w: any)=> Math.hypot(cur.x - w.x, cur.y - w.y)))
-              logical_checks++
-              if (distCur <= distPrev) logical_moves++
+      // Count events (decisions/messages, water pickups) across ticks
+      for (let i = 0; i < history.length; i++) {
+        const tick = history[i]
+        const events = tick.events || []
+        for (const ev of events) {
+          if (ev.type === 'message' && ev.model === m.id) {
+            messages[ev.content] = (messages[ev.content] || 0) + 1
+          }
+          if (ev.type === 'water_collected' && ev.model === m.id) {
+            water_picks++
+          }
+        }
+
+        // logical move checks based on consecutive positions
+        if (i > 0) {
+          const prevState = history[i-1].state || history[i-1]
+          const curState = history[i].state || history[i]
+          const prevA = (prevState.agents || []).find((x: any) => x.model_name === m.id)
+          const curA = (curState.agents || []).find((x: any) => x.model_name === m.id)
+          if (prevA && curA) {
+            if (curA.status === 'searching') {
+              const ws = curState.water_sources || []
+              if (ws.length > 0) {
+                const distPrev = Math.min(...ws.map((w: any)=> Math.hypot(prevA.x - w.x, prevA.y - w.y)))
+                const distCur = Math.min(...ws.map((w: any)=> Math.hypot(curA.x - w.x, curA.y - w.y)))
+                logical_checks++
+                if (distCur <= distPrev) logical_moves++
+              }
             }
           }
         }
@@ -80,7 +94,8 @@ export default function Page() {
     const tracks: Record<string, { x: number; y: number }[]> = {}
     if (!history || history.length === 0) return tracks
     for (const h of history) {
-      for (const a of h.agents || []) {
+      const state = h.state || h
+      for (const a of state.agents || []) {
         if (!tracks[a.model_name]) tracks[a.model_name] = []
         tracks[a.model_name].push({ x: a.x, y: a.y })
       }
@@ -137,9 +152,9 @@ export default function Page() {
       
       const ws = createSimulationSocket(
         simState.simulation_id,
-        (msg) => {
-          // store each tick state snapshot for post-game analysis
-          if (msg.state) setTickHistory(prev => [...prev, msg.state])
+          (msg) => {
+            // store the full tick message (state + events) for richer analysis
+            setTickHistory(prev => [...prev, msg])
           if (msg.type === "finished") {
             if (msg.state) {
               setSimState(msg.state)
@@ -172,7 +187,7 @@ export default function Page() {
             setWinnerLabel(msg.state.winner_model || null)
             setAppState("gameover")
             // prepare report
-            const report = buildReport([...tickHistory, msg.state])
+            const report = buildReport([...tickHistory, msg])
             setReportData(report)
           }
         },

@@ -22,10 +22,19 @@ from . import hf_spaces
 
 app = FastAPI(title="Unhinged 2.0", version="0.2.0")
 
-ALLOWED_ORIGINS = os.environ.get(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000"
-).split(",")
+_DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+]
+_configured_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if _configured_origins:
+    ALLOWED_ORIGINS = [origin.strip() for origin in _configured_origins.split(",") if origin.strip()]
+else:
+    ALLOWED_ORIGINS = _DEFAULT_ALLOWED_ORIGINS
 
 app.add_middleware(
     CORSMiddleware,

@@ -10,7 +10,7 @@ load_dotenv()
 _GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 _client = AsyncGroq(api_key=_GROQ_API_KEY) if _GROQ_API_KEY else None
 
-DEFAULT_DECISION_MODEL = "llama-3.1-8b-instant"
+DEFAULT_DECISION_MODEL = "mixtral-8x7b-32768"
 MAX_AGENT_SPEED = 80
 
 

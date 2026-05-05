@@ -43,10 +43,8 @@ KNOWN_SPACES_MODELS = [
 
 # Groq models (built-in)
 GROQ_MODELS = [
-    {"id": "llama-3.1-8b-instant", "name": "Llama 3.1 8B", "backend": "groq"},
-    {"id": "llama-3.1-70b-versatile", "name": "Llama 3.1 70B", "backend": "groq"},
     {"id": "mixtral-8x7b-32768", "name": "Mixtral 8x7B", "backend": "groq"},
-    {"id": "gemma-7b-it", "name": "Gemma 7B", "backend": "groq"},
+    {"id": "llama2-70b-4096", "name": "Llama 2 70B", "backend": "groq"},
 ]
 
 
